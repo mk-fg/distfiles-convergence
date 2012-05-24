@@ -1,0 +1,15 @@
+
+local:
+  - /mnt/db/softCore/_nix/distfiles
+
+remote:
+  - http://gentoo.bloodhost.ru/distfiles
+
+manifest:
+  type: shelve
+  path: /tmp/distfiles.db
+  hashes: [md5, sha1, sha512]
+
+fetcher:
+  type: aria2
+  # aria2 parameters...
