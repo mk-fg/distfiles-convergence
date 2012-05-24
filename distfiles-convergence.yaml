@@ -1,14 +1,32 @@
 
 local:
-  - /mnt/db/softCore/_nix/distfiles
+  - /srv/distfiles
 
 remote:
   - http://gentoo.bloodhost.ru/distfiles
+
+
+goal:
+
+  query:
+    ratio: 0.7 # try to query N/1.0 mirrors for each file
+    hard_min: 2 # min mirrors to query
+    hard_max: 5 # max mirrors to query
+
+  inconsistency: # how much of it is acceptable
+    ratio: 0
+    max: 0
+
+  warn:
+    local_changes: true # any changes in files' *contents*
+    unavailable: false # not available on enough mirrors
+
 
 manifest:
   type: shelve
   path: /tmp/distfiles.db
   hashes: [md5, sha1, sha512]
+
 
 fetcher:
   type: aria2
