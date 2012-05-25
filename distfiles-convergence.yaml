@@ -21,6 +21,20 @@ goal:
     local_changes: true # any changes in files' *contents*
     unavailable: false # not available on enough mirrors
 
+  gc_timeout: 30 # timeout to cleanup nx paths, days
+
+
+load:
+
+  net:
+    request_interval: 10
+    full_fetch_interval: 120
+    fetch_limit_per_run: 20
+
+  limit:
+    files: 500 # max number of fles to check before exiting
+    time: 5.0 # max operational time, hours
+
 
 manifest:
   type: shelve
