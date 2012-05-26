@@ -4,7 +4,7 @@ import itertools as it, operator as op, functools as ft
 from contextlib import closing
 from time import time
 from os.path import join, realpath, basename
-import os, sys, xmlrpclib, hashlib, json
+import os, sys, hashlib, json
 
 
 class ManifestDBM(object):
