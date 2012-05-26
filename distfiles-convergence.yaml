@@ -1,9 +1,14 @@
 
 local:
-  - /srv/distfiles
+  # - /srv/distfiles
 
-remote:
-  - http://gentoo.bloodhost.ru/distfiles
+remote: # in order of preference
+  gentoo_portage: # local gentoo distfile-manifests
+    # - /usr/portage
+  rsync: # rsync mirrors are more efficient than just dumb download
+    # - rsync://gentoo.gossamerhost.com/gentoo-distfiles/
+  mirrors: # http(s) / ftp
+    # - http://gentoo.lagis.at/
 
 
 goal:
@@ -13,13 +18,13 @@ goal:
     hard_min: 2 # min mirrors to query
     hard_max: 5 # max mirrors to query
 
-  inconsistency: # how much of it is acceptable
-    ratio: 0
-    max: 0
-
   warn:
     local_changes: true # any changes in files' *contents*
     unavailable: false # not available on enough mirrors
+    skipped_remote: true # skipped/ignored remotes
+    inconsistency: # how much of it is considered acceptable
+      ratio: 0
+      max: 0
 
   gc_timeout: 30 # timeout to cleanup nx paths, days
 
@@ -32,16 +37,19 @@ load:
     fetch_limit_per_run: 20
 
   limit:
-    files: 500 # max number of fles to check before exiting
-    time: 5.0 # max operational time, hours
+    # Max number of fles to check before exiting.
+    files: 500
+    # Max unexpected checking errors to tolerate.
+    # Can be used to prevent shitload of errors in cases
+    #  when network is unavailable or something like that.
+    errors: 5
 
 
 manifest:
-  type: shelve
+  type: dbm
   path: /tmp/distfiles.db
-  hashes: [md5, sha1, sha512]
+  hashes: [md5, sha1, sha256, rmd160, sha512]
 
-
-fetcher:
-  type: aria2
-  # aria2 parameters...
+checks:
+  gentoo_portage:
+    meta_manifest: /tmp/meta_manifest.{hash}.txt # combined Manifest for portage-path
