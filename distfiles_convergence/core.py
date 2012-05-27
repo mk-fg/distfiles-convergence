@@ -250,14 +250,14 @@ def check_remotes( paths, remotes, db, checks,
 
 		# Order is fixed as tiers:
 		#  previously-inconsistent mirrors
-		#  non-404 mirrors
+		#  not-yet-checked mirrors
 		#  404 (file wasn't found there before) mirrors
 		# Mirrors within each tier are ordered as configured
 		rs_ordered = list( remotes[idx]
 			for idx in reduce( op.add,
 				( sorted(it.imap(remotes.index, rs_set))
 					for rs_set in [ rs_err,
-						set(remotes).difference(rs_nx, rs_err),
+						set(remotes).difference(rs_err, rs_done, rs_nx),
 						(set(remotes).intersection(rs_nx) if not skip_nx else set()) ] ) ) )
 		if not rs_ordered: continue
 
