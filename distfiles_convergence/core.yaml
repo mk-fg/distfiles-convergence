@@ -45,11 +45,13 @@ goal:
 
 
 manifest:
+  # Keeps the data about local files, their checksums and sync-status.
   type: dbm
   path: /tmp/distfiles.db
   hashes: [md5, sha1, sha256, rmd160, sha512]
 
 checks:
+  # Settings for corresponding types of checks in "remote" section.
   gentoo_portage:
     # Combined Manifest for portage-path,
     #  "{hash}" will be substituted with checksum of the path.
