@@ -101,13 +101,18 @@ def check_portage(portage, path, hashes, conf):
 
 	meta_manifest = conf.meta_manifest\
 		.format(hash=hashlib.md5(portage).hexdigest()[:5])
-	try: meta_manifest_mtime = os.stat(meta_manifest).st_mtime
+	try: meta_manifest_ts = os.stat(meta_manifest).st_mtime
 	except OSError: meta_manifest_mtime = 0
-	if os.stat(join(portage, 'metadata', 'timestamp.chk')).st_mtime > meta_manifest_mtime:
+	try:
+		portage_ts = os.stat(join(
+			portage, 'metadata', 'timestamp.chk' )).st_mtime
+	except OSError: portage_ts = 0
+	if not portage_ts or portage_ts > meta_manifest_ts:
 		from plumbum.cmd import find, xargs
 		from plumbum.commands import PIPE
 		proc = (
-				find[portage, '-mindepth', '3', '-maxdepth', '3', '-name', 'Manifest']\
+				find[ portage, '-mindepth', '3', '-maxdepth', '3',
+					'-name', 'Manifest', '-newert', '@{}'.format(int(meta_manifest_ts)) ]\
 				| xargs['-n100', '--no-run-if-empty', 'grep', '--no-filename', '^DIST ']
 			).popen(stdout=PIPE)
 		with closing(anydbm.open(meta_manifest, 'c')) as mdb:
