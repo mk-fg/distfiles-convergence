@@ -50,7 +50,7 @@ class ManifestDBM(object):
 
 	def iteritems(self): return ((k, self.decode(v)) for k,v in self.db.iteritems())
 
-	def undergoal_order(self, qmin, qmax, limit, remotes):
+	def undergoal_order(self, qmin, qmax, remotes, limit=None):
 		queue = list()
 		for path, meta in self.iteritems():
 			meta_remotes = meta.get('remotes', dict())
@@ -63,7 +63,7 @@ class ManifestDBM(object):
 			prio = prio['inconsistent'], max(0, qmin - prio['consistent']),\
 				max(0, qmax - prio['consistent']), -prio['unavailable']
 			queue.append((prio, path))
-			if limit and len(queue) > limit: break
+			if limit and len(queue) >= limit: break
 		return map(op.itemgetter(1), sorted(queue, reverse=True))
 
 
@@ -198,28 +198,30 @@ def check_rsync_batched(url, paths, conf):
 
 	if isinstance(paths, dict): paths = paths.viewitems()
 	paths = it.groupby(sorted(
-		path.rsplit(os.sep, 1) for path,hashes in paths ), key=op.itemgetter(0))
-	for dst, paths in paths:
-		paths = set(it.imap(op.itemgetter(1), paths))
-		rsync_filter = '\n'.join(map('+ /{}'.format, paths) + ['- *', ''])
+		(path.rsplit(os.sep, 1) + [path])
+		for path,hashes in paths ), key=op.itemgetter(0))
+	for dst, names in paths:
+		names = dict(it.imap(op.itemgetter(1, 2), names))
+		ps_err, ps_done, ps_nx = set(), set(), set()
+		log.debug('Querying rsync-remote for {} names'.format(len(names)))
+		rsync_filter = '\n'.join(map('+ /{}'.format, names) + ['- *', ''])
 		with TemporaryFile() as tmp:
 			tmp.write(rsync_filter)
 			tmp.flush(), tmp.seek(0)
 			proc = (rsync[ '--dry-run', '-cr', '-vv',
 				'--filter=merge -', url, dst ] < tmp).popen(stdout=PIPE)
-			ps_err, ps_done, ps_nx = set(), set(), set()
 			for line in it.imap(op.methodcaller('strip'), proc.stdout):
-				if line in paths:
-					ps_err.add(line)
+				if line in names:
+					ps_err.add(names[line])
 					continue
 				match = re.search(r'^(?P<name>.+)\s+is uptodate', line)
 				if match:
 					name = match.group('name')
-					if name not in paths:
+					if name not in names:
 						log.warn('Detected "uptodate" response for unknown name: {}'.format(name))
-					else: ps_done.add(name)
+					else: ps_done.add(names[name])
 					continue
-			ps_nx = paths.difference(ps_err, ps_done)
+			ps_nx = set(names.viewvalues()).difference(ps_err, ps_done)
 			log.debug( 'Rsync stats - inconsistent:'
 				' {}, consistent: {}, nx: {}'.format(*it.imap(len, [ps_err, ps_done, ps_nx])) )
 			psg_err.update(ps_err), psg_done.update(ps_done), psg_nx.update(ps_nx)
