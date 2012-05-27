@@ -3,12 +3,28 @@
 import itertools as it, operator as op, functools as ft
 from contextlib import closing
 from time import time
-from os.path import join, realpath, basename
+from fnmatch import fnmatch
 from threading import Event
+from tempfile import TemporaryFile
+from os.path import join, realpath, basename, dirname
 import os, sys, hashlib, re
 
 try: import simplejson as json
 except ImportError: import json
+
+
+def fnmatch( pattern, name,
+		_match=fnmatch, _glob_cbex = re.compile(r'\{[^}]+\}') ):
+	'''Shell-like fnmatch with support for curly braces.
+		Usage of these braces in the actual name isn't supported.'''
+	subs = list()
+	while True:
+		ex = _glob_cbex.search(pattern)
+		if not ex: break
+		subs.append(ex.group(0)[1:-1].split(','))
+		pattern = pattern[:ex.span()[0]] + '{}' + pattern[ex.span()[1]:]
+	return any( _match(name, pat)
+		for pat in it.starmap(pattern.format, it.product(*subs)) )
 
 
 class ManifestDBM(object):
@@ -155,6 +171,7 @@ def check_portage(portage, path, hashes, conf,
 		if not match: raise NXError(name)
 		return True # at least one match found and no mismatches
 
+
 def check_rsync(url, path, hashes, conf):
 	from plumbum.cmd import rsync
 	from plumbum.commands import ProcessExecutionError
@@ -173,11 +190,52 @@ def check_rsync(url, path, hashes, conf):
 	elif err: raise err
 	else: raise CheckError('Rsync run failed: {!r}'.format([code, stdout, stderr]))
 
+def check_rsync_batched(url, paths, conf):
+	from plumbum.cmd import rsync
+	from plumbum.commands import PIPE
+	url = ''.join([url, '/' if not url.endswith('/') else '', '.'])
+	psg_err, psg_done, psg_nx = set(), set(), set()
+
+	if isinstance(paths, dict): paths = paths.viewitems()
+	paths = it.groupby(sorted(
+		path.rsplit(os.sep, 1) for path,hashes in paths ), key=op.itemgetter(0))
+	for dst, paths in paths:
+		paths = set(it.imap(op.itemgetter(1), paths))
+		rsync_filter = '\n'.join(map('+ /{}'.format, paths) + ['- *', ''])
+		with TemporaryFile() as tmp:
+			tmp.write(rsync_filter)
+			tmp.flush(), tmp.seek(0)
+			proc = (rsync[ '--dry-run', '-cr', '-vv',
+				'--filter=merge -', url, dst ] < tmp).popen(stdout=PIPE)
+			ps_err, ps_done, ps_nx = set(), set(), set()
+			for line in it.imap(op.methodcaller('strip'), proc.stdout):
+				if line in paths:
+					ps_err.add(line)
+					continue
+				match = re.search(r'^(?P<name>.+)\s+is uptodate', line)
+				if match:
+					name = match.group('name')
+					if name not in paths:
+						log.warn('Detected "uptodate" response for unknown name: {}'.format(name))
+					else: ps_done.add(name)
+					continue
+			ps_nx = paths.difference(ps_err, ps_done)
+			log.debug( 'Rsync stats - inconsistent:'
+				' {}, consistent: {}, nx: {}'.format(*it.imap(len, [ps_err, ps_done, ps_nx])) )
+			psg_err.update(ps_err), psg_done.update(ps_done), psg_nx.update(ps_nx)
+	return psg_err, psg_done, psg_nx
+
+
 def check_mirror(url, path, hashes, conf): pass
+
 
 def check_remotes( paths, remotes, db, checks,
 		thresh_err=0, thresh_nx=0, thresh_bug=0,
-		skip_nx=False, warn_skip=True ):
+		skip_nx=False, warn_skip=True, skip_remotes=None ):
+
+	if not skip_remotes: skip_remotes = set()
+	batched = dict()
+
 	for path in paths:
 		meta = db[path]
 		rs = meta.get('remotes', dict())
@@ -203,7 +261,15 @@ def check_remotes( paths, remotes, db, checks,
 
 		log.debug('Querying remotes for path {}: {}'.format(path, rs_ordered))
 		for remote in rs_ordered:
+			if remote in skip_remotes: continue
 			rtype, url = remote
+
+			if '{}__batched'.format(rtype) in checks:
+				log.debug('Delaying query for path {!r} into batch: {}'.format(path, remote))
+				if remote not in batched: batched[remote] = list()
+				batched[remote].append(((path, meta.get('hashes', dict())), rs_ordered))
+				break
+
 			try: match = checks[rtype](url, path, meta.get('hashes', dict()))
 			except NXError:
 				(log.warn if thresh_nx else log.info)\
@@ -227,6 +293,25 @@ def check_remotes( paths, remotes, db, checks,
 		meta['remotes'] = dict(it.izip([ 'inconsistent',
 			'consistent', 'unavailable' ], it.imap(list, [rs_err, rs_done, rs_nx])))
 		db[path] = meta
+
+	if batched:
+		tails = list()
+		for remote, paths in batched.viewitems():
+			rtype, url = remote
+			rpaths = dict(it.imap(op.itemgetter(0), paths))
+			ps_err, ps_done, ps_nx = checks['{}__batched'.format(rtype)](url, rpaths)
+			for path in rpaths:
+				meta = db[path]
+				for k, ps in [('inconsistent', ps_err), ('consistent', ps_done), ('unavailable', ps_nx)]:
+					if path in ps: meta['remotes'][k] = list(set(meta['remotes'][k]).union([remote]))
+				db[path] = meta
+			tails.extend(rpaths)
+			skip_remotes.add(remote)
+
+		# Recursive call to process the rest of the remotes
+		check_remotes( tails, remotes, db, checks,
+			thresh_err=thresh_err, thresh_nx=thresh_nx, thresh_bug=thresh_bug,
+			skip_nx=skip_nx, warn_skip=warn_skip, skip_remotes=skip_remotes )
 
 
 
@@ -262,9 +347,10 @@ def main():
 	## Modules
 	modules_manifest_db = dict(dbm=ManifestDBM)
 	modules_remote = dict(
-		(k, ft.partial(v, conf=cfg.checks.get(k, dict())))
+		(k, ft.partial(v, conf=cfg.checks.get(k.split('__', 1)[0], dict())))
 		for k,v in dict( gentoo_portage=check_portage,
-			rsync=check_rsync, mirrors=check_mirror ).viewitems() )
+			rsync=check_rsync, rsync__batched=check_rsync_batched,
+			mirrors=check_mirror ).viewitems() )
 
 	## Catch-up with local fs
 	check_fs_ts = time()
