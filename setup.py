@@ -39,7 +39,8 @@ setup(
 
 	install_requires = ['layered-yaml-attrdict-config'],
 	extras_require = {
-		'remotes.gentoo_portage': ['plumbum'] },
+		'remotes.gentoo_portage': ['plumbum'],
+		'remotes.rsync': ['plumbum'] },
 
 	packages = find_packages(),
 	include_package_data = True,

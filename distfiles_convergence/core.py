@@ -4,7 +4,10 @@ import itertools as it, operator as op, functools as ft
 from contextlib import closing
 from time import time
 from os.path import join, realpath, basename
-import os, sys, hashlib, json
+import os, sys, hashlib, re
+
+try: import simplejson as json
+except ImportError: import json
 
 
 class ManifestDBM(object):
@@ -95,6 +98,7 @@ def check_gc(db, timeout):
 
 
 class NXError(Exception): pass
+class CheckError(Exception): pass
 
 def check_portage(portage, path, hashes, conf):
 	import anydbm
@@ -142,7 +146,24 @@ def check_portage(portage, path, hashes, conf):
 		if not match: raise NXError(name)
 		return True # at least one match found and no mismatches
 
-def check_rsync(url, path, hashes, conf): pass
+def check_rsync(url, path, hashes, conf):
+	from plumbum.cmd import rsync
+	from plumbum.commands import ProcessExecutionError
+
+	name = basename(path)
+	url = ''.join([url, '/' if not url.endswith('/') else '', name])
+
+	err = None
+	try: code, stdout, stderr = rsync['--dry-run', '-c', '--out-format=%n', url, path].run()
+	except ProcessExecutionError as err: cmd, code, stdout, stderr = err.args
+
+	stdout, stderr = stdout.strip(), stderr.strip()
+	if code == 0: return not stdout
+	elif code == 23 and re.search( r'\blink_stat'
+		r' .* failed: No such file or directory\b', stderr ): raise NXError(name)
+	elif err: raise err
+	else: raise CheckError('Rsync run failed: {!r}'.format([code, stdout, stderr]))
+
 def check_mirror(url, path, hashes, conf): pass
 
 def check_remotes( paths, remotes, db, checks,
