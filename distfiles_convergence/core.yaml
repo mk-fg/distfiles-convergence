@@ -10,6 +10,13 @@ remote: # in order of preference
   mirrors: # http(s) / ftp
     # - http://gentoo.lagis.at/
 
+exclude: # patterns to match against basename to skip checking file
+  from_files: # files to interpret line-by-line as exclude-patterns
+    # - /tmp/exclude_list.txt
+  patterns: # fnmatch patterns (with "{a,b}" expansion) to exclude from checks
+    # - '*.patch'
+    # - 'weird_upsream.tar.{gz,bz2,xz}'
+
 
 goal:
 
@@ -51,4 +58,3 @@ checks:
   mirrors:
     request_interval: 10
     full_fetch_interval: 120
-    fetch_limit_per_run: 20

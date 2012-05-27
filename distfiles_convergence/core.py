@@ -4,6 +4,7 @@ import itertools as it, operator as op, functools as ft
 from contextlib import closing
 from time import time
 from os.path import join, realpath, basename
+from threading import Event
 import os, sys, hashlib, re
 
 try: import simplejson as json
@@ -100,35 +101,43 @@ def check_gc(db, timeout):
 class NXError(Exception): pass
 class CheckError(Exception): pass
 
-def check_portage(portage, path, hashes, conf):
+
+def check_portage(portage, path, hashes, conf,
+		_manifest_up2date=Event() ):
 	import anydbm
 
 	meta_manifest = conf.meta_manifest\
 		.format(hash=hashlib.md5(portage).hexdigest()[:5])
-	try: meta_manifest_ts = os.stat(meta_manifest).st_mtime
-	except OSError: meta_manifest_mtime = 0
-	try:
-		portage_ts = os.stat(join(
-			portage, 'metadata', 'timestamp.chk' )).st_mtime
-	except OSError: portage_ts = 0
-	if not portage_ts or portage_ts > meta_manifest_ts:
-		from plumbum.cmd import find, xargs
-		from plumbum.commands import PIPE
-		proc = (
-				find[ portage, '-mindepth', '3', '-maxdepth', '3',
-					'-name', 'Manifest', '-newert', '@{}'.format(int(meta_manifest_ts)) ]\
-				| xargs['-n100', '--no-run-if-empty', 'grep', '--no-filename', '^DIST ']
-			).popen(stdout=PIPE)
-		with closing(anydbm.open(meta_manifest, 'c')) as mdb:
-			for line in proc.stdout:
-				dist, name, size, line_hashes = line.split(None, 3)
-				assert dist == 'DIST'
-				line_hashes = iter(line_hashes.strip().split())
-				while True:
-					try: k,v = next(line_hashes), next(line_hashes)
-					except StopIteration: break
-					mdb['{}:{}'.format(k.lower(), name)] = v
-		proc.wait()
+
+	if not _manifest_up2date.is_set():
+		try: meta_manifest_ts = os.stat(meta_manifest).st_mtime
+		except OSError: meta_manifest_mtime = 0
+		try:
+			portage_ts = os.stat(join(
+				portage, 'metadata', 'timestamp.chk' )).st_mtime
+		except OSError: portage_ts = 0
+		if not portage_ts or portage_ts > meta_manifest_ts:
+			log.debug( 'Updating combined'
+				' portage manifest-db ({})'.format(meta_manifest) )
+			from plumbum.cmd import find, xargs
+			from plumbum.commands import PIPE
+			proc = (
+					find[ portage, '-mindepth', '3', '-maxdepth', '3',
+						'-name', 'Manifest', '-newert', '@{}'.format(int(meta_manifest_ts)) ]\
+					| xargs['-n100', '--no-run-if-empty', 'grep', '--no-filename', '^DIST ']
+				).popen(stdout=PIPE)
+			with closing(anydbm.open(meta_manifest, 'c')) as mdb:
+				for line in proc.stdout:
+					dist, name, size, line_hashes = line.split(None, 3)
+					assert dist == 'DIST'
+					line_hashes = iter(line_hashes.strip().split())
+					while True:
+						try: k,v = next(line_hashes), next(line_hashes)
+						except StopIteration: break
+						mdb['{}:{}'.format(k.lower(), name)] = v
+			proc.wait()
+		_manifest_up2date.set()
+		os.utime(meta_manifest, None) # make sure mtime gets bumped
 
 	name = basename(path)
 	with closing(anydbm.open(meta_manifest, 'r')) as mdb:
@@ -272,15 +281,27 @@ def main():
 	for rtype, urls in cfg.remote.viewitems():
 		for url in urls or list(): remotes.append((rtype, url))
 
+	## Build a set of excluded filename-patterns
+	exclude = set(cfg.exclude.patterns or set())
+	for src in cfg.exclude.from_files or list():
+		with open(src, 'rb') as src:
+			for pat in it.ifilter( None,
+					it.imap(op.methodcaller('strip'), src) ):
+				exclude.add(pat)
+
 	## Build a large-enough list of stuff to be checked
 	qratio = int(len(remotes) * cfg.goal.query.ratio)
 	qmin = min(len(remotes), cfg.goal.query.hard_min or qratio)
 	qmax = min(len(remotes), max(qmin, cfg.goal.query.hard_max or qratio))
 	undergoal = manifest_db.undergoal_order(
 		qmin, qmax, limit=cfg.goal.limit.files or None, remotes=remotes )
-	# Check that each listed path actually exists now
+	# Check that each listed path actually exists now and isn't conf-excluded
 	drop = set()
 	for path in undergoal:
+		for pat in exclude:
+			if fnmatch(pat, basename(path)):
+				drop.add(path)
+				continue
 		try:
 			meta = manifest_db[path]
 			if meta['ts'] != check_fs_ts and not os.path.exists(path):
