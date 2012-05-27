@@ -7,8 +7,10 @@ remote: # in order of preference
     # - /usr/portage
   rsync: # rsync mirrors are more efficient than just dumb download
     # - rsync://gentoo.gossamerhost.com/gentoo-distfiles/
-  mirrors: # http(s) / ftp
-    # - http://gentoo.lagis.at/
+
+  # Not implemented yet.
+  # mirrors: # http(s) / ftp
+  #   # - http://gentoo.lagis.at/
 
 exclude: # patterns to match against basename to skip checking file
   from_files: # files to interpret line-by-line as exclude-patterns
