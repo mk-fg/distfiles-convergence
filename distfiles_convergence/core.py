@@ -15,7 +15,13 @@ class ManifestDBM(object):
 
 	def decode(self, v):
 		vv, v = v[0], v[1:]
-		if vv == '\1': return json.loads(v)
+		if vv == '\1':
+			v = json.loads(v)
+			# JSON doesn't have tuples, hence this
+			remotes = v.get('remotes', dict())
+			for k,rs in remotes.viewitems():
+				remotes[k] = map(tuple, rs)
+			return v
 		raise NotImplementedError('Unknown value encoding version: {}'.format(ord(vv)))
 
 	def __getitem__(self, k): return self.decode(self.db[k])
@@ -37,8 +43,8 @@ class ManifestDBM(object):
 			prio = prio['inconsistent'], max(0, qmin - prio['consistent']),\
 				max(0, qmax - prio['consistent']), -prio['unavailable']
 			queue.append((prio, path))
-			if len(queue) > limit: break
-		return map(op.itemgetter(1), sorted(queue))
+			if limit and len(queue) > limit: break
+		return map(op.itemgetter(1), sorted(queue, reverse=True))
 
 
 def check_fs( path, db,
@@ -61,6 +67,7 @@ def check_fs( path, db,
 			if meta and path_mtime != meta.get('mtime'):
 				src_hashes = dict( (alg, func())
 					for alg,func in hashes.viewitems() )
+				log.debug('Generating checksums for path: {}'.format(path))
 				with open(path, 'rb') as src:
 					for chunk in iter(ft.partial(src.read, bs), ''):
 						for chksum in src_hashes.viewvalues(): chksum.update(chunk)
@@ -69,7 +76,7 @@ def check_fs( path, db,
 					chksum = src_hashes[alg] = chksum.hexdigest()
 					if alg in meta_hashes:
 						if meta_hashes[alg] != chksum:
-							(log.warn if local_changes_warn else log.debug)\
+							(log.warn if local_changes_warn else log.info)\
 								('Detected change in file contents: {}'.format(path))
 							meta_update = True
 					else: meta_update = True
@@ -81,8 +88,10 @@ def check_fs( path, db,
 
 def check_gc(db, timeout):
 	ts_min = time() - timeout
-	for k in list( path for path, meta
-		in db.iteritems() if meta['ts'] < ts_min ): del db[k]
+	for path in list( path for path, meta
+			in db.iteritems() if meta['ts'] < ts_min ):
+		log.debug('Dropping metadata for path: {}'.format(path))
+		del db[path]
 
 
 class NXError(Exception): pass
@@ -112,8 +121,8 @@ def check_portage(portage, path, hashes, conf):
 					mdb['{}:{}'.format(k.lower(), name)] = v
 		proc.wait()
 
+	name = basename(path)
 	with closing(anydbm.open(meta_manifest, 'r')) as mdb:
-		name = basename(path)
 		match = False
 		for alg,chksum in hashes.viewitems():
 			try:
@@ -122,7 +131,8 @@ def check_portage(portage, path, hashes, conf):
 					match = True
 					continue
 			except KeyError: continue
-			log.debug('Inconsistency b/w checksums - mdb: {}, local: {}'.format(mdb_chksum, chksum))
+			log.info( 'Inconsistency b/w checksums'
+				' (type: {}) - mdb: {}, local: {}'.format(alg, mdb_chksum, chksum) )
 			return False # checksum inconsistency
 		if not match: raise NXError(name)
 		return True # at least one match found and no mismatches
@@ -131,7 +141,8 @@ def check_rsync(url, path, hashes, conf): pass
 def check_mirror(url, path, hashes, conf): pass
 
 def check_remotes( paths, remotes, db, checks,
-		thresh_err=0, thresh_nx=0, thresh_bug=0, warn_skip=True ):
+		thresh_err=0, thresh_nx=0, thresh_bug=0,
+		skip_nx=False, warn_skip=True ):
 	for path in paths:
 		meta = db[path]
 		rs = meta.get('remotes', dict())
@@ -151,14 +162,16 @@ def check_remotes( paths, remotes, db, checks,
 			for idx in reduce( op.add,
 				( sorted(it.imap(remotes.index, rs_set))
 					for rs_set in [ rs_err,
-						set(remotes).difference(rs_nx),
-						set(remotes).intersection(rs_nx) ] ) ) )
+						set(remotes).difference(rs_nx, rs_err),
+						(set(remotes).intersection(rs_nx) if not skip_nx else set()) ] ) ) )
+		if not rs_ordered: continue
 
+		log.debug('Querying remotes for path {}: {}'.format(path, rs_ordered))
 		for remote in rs_ordered:
 			rtype, url = remote
 			try: match = checks[rtype](url, path, meta.get('hashes', dict()))
 			except NXError:
-				(log.warn if thresh_nx else log.debug)\
+				(log.warn if thresh_nx else log.info)\
 					('Path {!r} not found on remote {!r}'.format(path, remote))
 				rs_nx.add(remote)
 			except Exception as err:
@@ -168,16 +181,17 @@ def check_remotes( paths, remotes, db, checks,
 			else:
 				if match is False:
 					rs_err.add(remote)
-					(log.warn if len(rs_err) >= thresh_err else log.debug)\
+					(log.warn if len(rs_err) >= thresh_err else log.info)\
 						( 'Detected inconsistency between'
 							' remote {!r} and path {!r}'.format(remote, path) )
 				elif match: rs_done.add(remote)
 				else:
-					(log.warn if warn_skip else log.debug)\
+					(log.warn if warn_skip else log.info)\
 						('Skipped check Remote: {!r}, path: {!r}'.format(remote, path))
 
-		db[path]['remotes'] = dict(it.izip([ 'inconsistent',
+		meta['remotes'] = dict(it.izip([ 'inconsistent',
 			'consistent', 'unavailable' ], it.imap(list, [rs_err, rs_done, rs_nx])))
+		db[path] = meta
 
 
 
@@ -191,6 +205,8 @@ def main():
 			' Can be specified more than once.'
 			' Values from the latter ones override values in the former.'
 			' Available CLI options override the values in any config.')
+	parser.add_argument('-n', '--skip-nx',
+		action='store_true', help='Do not retry known-404 mirrors.')
 	parser.add_argument('--debug',
 		action='store_true', help='Verbose operation mode.')
 	optz = parser.parse_args()
@@ -215,13 +231,14 @@ def main():
 		for k,v in dict( gentoo_portage=check_portage,
 			rsync=check_rsync, mirrors=check_mirror ).viewitems() )
 
-	## Update the manifest
+	## Catch-up with local fs
 	check_fs_ts = time()
 	manifest_db = modules_manifest_db[cfg.manifest.type](cfg.manifest)
+	log.debug('Updating manifest-db with hashes of local files')
 	for path in cfg.local:
 		check_fs( path, manifest_db, hashes=cfg.manifest.hashes,
 			ts=check_fs_ts, local_changes_warn=cfg.goal.warn.local_changes )
-	## Manifest cleanup
+	log.debug('Manifest-db cleanup')
 	check_gc(manifest_db, cfg.goal.gc_timeout * 24 * 3600)
 
 	## List of remotes in order of preference
@@ -234,7 +251,7 @@ def main():
 	qmin = min(len(remotes), cfg.goal.query.hard_min or qratio)
 	qmax = min(len(remotes), max(qmin, cfg.goal.query.hard_max or qratio))
 	undergoal = manifest_db.undergoal_order(
-		qmin, qmax, limit=cfg.load.limit.files, remotes=remotes )
+		qmin, qmax, limit=cfg.goal.limit.files or None, remotes=remotes )
 	# Check that each listed path actually exists now
 	drop = set()
 	for path in undergoal:
@@ -247,13 +264,14 @@ def main():
 			drop.add(path)
 	undergoal = list(path for path in undergoal if path not in drop)
 
-	## Check the manifest against remotes
+	## Check against remotes
+	log.debug('Checking manifest-db against remotes')
 	check_remotes(
 		undergoal, remotes, manifest_db, modules_remote,
 		thresh_err=min( cfg.goal.warn.inconsistency.max,
 			int(len(remotes) * cfg.goal.warn.inconsistency.ratio) ),
-		thresh_nx=cfg.goal.warn.unavailable, thresh_bug=cfg.load.limit.errors,
-		warn_skip=cfg.goal.warn.skipped_remote )
+		thresh_nx=cfg.goal.warn.unavailable, thresh_bug=cfg.goal.limit.errors,
+		skip_nx=optz.skip_nx, warn_skip=cfg.goal.warn.skipped_remote )
 
 	log.debug('Done')
 

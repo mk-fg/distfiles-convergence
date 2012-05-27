@@ -28,17 +28,9 @@ goal:
 
   gc_timeout: 30 # timeout to cleanup nx paths, days
 
-
-load:
-
-  net:
-    request_interval: 10
-    full_fetch_interval: 120
-    fetch_limit_per_run: 20
-
   limit:
     # Max number of fles to check before exiting.
-    files: 500
+    files:
     # Max unexpected checking errors to tolerate.
     # Can be used to prevent shitload of errors in cases
     #  when network is unavailable or something like that.
@@ -52,4 +44,11 @@ manifest:
 
 checks:
   gentoo_portage:
-    meta_manifest: /tmp/meta_manifest.{hash}.txt # combined Manifest for portage-path
+    # Combined Manifest for portage-path,
+    #  "{hash}" will be substituted with checksum of the path.
+    # Can be static one-for-all-portage-paths-specified.
+    meta_manifest: /tmp/portage_manifest.{hash}.db
+  mirrors:
+    request_interval: 10
+    full_fetch_interval: 120
+    fetch_limit_per_run: 20
