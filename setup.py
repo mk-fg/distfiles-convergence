@@ -5,6 +5,10 @@ import os
 
 pkg_root = os.path.dirname(__file__)
 
+# Error-handling here is to allow package to be built w/o README included
+try: readme = open(os.path.join(pkg_root, 'README.md')).read()
+except IOError: readme = ''
+
 setup(
 
 	name = 'distfiles-convergence',
@@ -18,7 +22,7 @@ setup(
 
 	description = 'Tool to verify integrity of the local source'
 		' tarballs (or distfiles) by mirror network consensus',
-	long_description = open(os.path.join(pkg_root, 'README.md')).read(),
+	long_description = readme,
 
 	classifiers = [
 		'Development Status :: 4 - Beta',
