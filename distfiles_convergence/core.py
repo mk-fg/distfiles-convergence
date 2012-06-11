@@ -334,6 +334,10 @@ def main():
 		type=int, metavar='unix_time',
 		help='Only act on files with'
 			' mtime larger than the given value (unix timestamp).')
+	parser.add_argument('-l', '--list', nargs='?', metavar='types', default=False,
+		help='Instead of usual action, just dump current state of all the files and exit.'
+			'Can take an optional "type" (of mirrors wrt file) argument (comma-separated type(s)):'
+				' consistent, inconsistent, unavailable, undergoal (default: inconsistent, unavailable).')
 	parser.add_argument('-n', '--skip-nx',
 		action='store_true', help='Do not retry known-404 mirrors.')
 	parser.add_argument('--debug',
@@ -391,8 +395,9 @@ def main():
 	qratio = int(len(remotes) * cfg.goal.query.ratio)
 	qmin = min(len(remotes), cfg.goal.query.hard_min or qratio)
 	qmax = min(len(remotes), max(qmin, cfg.goal.query.hard_max or qratio))
+	limit = (cfg.goal.limit.files or None) if not optz.list else None
 	undergoal = manifest_db.undergoal_order(
-		qmin, qmax, limit=cfg.goal.limit.files or None,
+		qmin, qmax, limit=limit,
 		remotes=remotes, ts_min=optz.mtime_after )
 	# Check that each listed path actually exists now and isn't conf-excluded
 	drop = set()
@@ -409,6 +414,41 @@ def main():
 			log.debug('Skipping check for unlisted/nx path: {}'.format(path))
 			drop.add(path)
 	undergoal = list(path for path in undergoal if path not in drop)
+
+	## Just dump the list, if requested
+	if optz.list is not False:
+		log.debug('Just listing all the remotes')
+		if not optz.list: optz.list = 'inconsistent, unavailable'
+		mtypes = sorted(it.imap(op.methodcaller('strip'), optz.list.split(',')))
+		mtypes_err = set(mtypes).difference([
+			'consistent', 'inconsistent', 'unavailable', 'undergoal' ])
+		if mtypes_err:
+			parser.error('Unrecognized check states: {}'.format(', '.join(mtypes_err)))
+		if 'undergoal' in mtypes:
+			undergoal_check = True
+			mtypes = sorted(
+				set(mtypes).difference(['undergoal'])\
+					.union(['consistent', 'inconsistent', 'unavailable']) )
+		else: undergoal_check = False
+		for path in undergoal:
+			meta_remotes = manifest_db[path]['remotes']
+			if undergoal_check and not (
+				len(set(meta_remotes.get(
+					'consistent', set() )).intersection(remotes)) < qmin\
+				or set(meta_remotes.get(
+					'inconsistent', set() )).intersection(remotes) ): continue
+			path_line = False
+			for mtype in mtypes:
+				mtype_remotes = set(meta_remotes.get(mtype, set())).intersection(remotes)
+				if not mtype_remotes: continue
+				if not path_line:
+					print('Path: {}'.format(path))
+					path_line = True
+				print('  {}{}'.format(mtype, ' ({}{}):\n    {}'.format(
+					len(mtype_remotes), ''
+						if mtype != 'consistent' else ', min/max: {}/{}'.format(qmin, qmax),
+					'\n    '.join(it.starmap('({}) {}'.format, sorted(mtype_remotes))) )))
+		sys.exit()
 
 	## Check against remotes
 	log.debug('Checking manifest-db against remotes')
