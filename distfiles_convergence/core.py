@@ -431,12 +431,15 @@ def main():
 					.union(['consistent', 'inconsistent', 'unavailable']) )
 		else: undergoal_check = False
 		for path in undergoal:
-			meta_remotes = manifest_db[path]['remotes']
+			meta_remotes = manifest_db[path].get('remotes', dict())
 			if undergoal_check and not (
 				len(set(meta_remotes.get(
 					'consistent', set() )).intersection(remotes)) < qmin\
 				or set(meta_remotes.get(
 					'inconsistent', set() )).intersection(remotes) ): continue
+			if not meta_remotes:
+				print('Path: {}\n  No consistency data available'.format(path))
+				continue
 			path_line = False
 			for mtype in mtypes:
 				mtype_remotes = set(meta_remotes.get(mtype, set())).intersection(remotes)
