@@ -6,6 +6,7 @@ from time import time
 from fnmatch import fnmatch
 from threading import Event
 from tempfile import TemporaryFile
+from collections import defaultdict
 from os.path import join, realpath, basename, dirname
 import os, sys, hashlib, re
 
@@ -238,7 +239,7 @@ def check_remotes( paths, remotes, db, checks,
 		thresh_err=0, thresh_nx=0, thresh_bug=0,
 		skip_nx=False, warn_skip=True, skip_remotes=None ):
 
-	if not skip_remotes: skip_remotes = set()
+	if not skip_remotes: skip_remotes = defaultdict(set)
 	batched = dict()
 
 	for path in paths:
@@ -266,7 +267,7 @@ def check_remotes( paths, remotes, db, checks,
 
 		log.debug('Querying remotes for path {}: {}'.format(path, rs_ordered))
 		for remote in rs_ordered:
-			if remote in skip_remotes: continue
+			if remote in skip_remotes[path]: continue
 			rtype, url = remote
 
 			if '{}__batched'.format(rtype) in checks:
@@ -295,6 +296,8 @@ def check_remotes( paths, remotes, db, checks,
 					(log.warn if warn_skip else log.info)\
 						('Skipped check Remote: {!r}, path: {!r}'.format(remote, path))
 
+				skip_remotes[path].add(remote)
+
 		meta['remotes'] = dict(it.izip([ 'inconsistent',
 			'consistent', 'unavailable' ], it.imap(list, [rs_err, rs_done, rs_nx])))
 		db[path] = meta
@@ -310,8 +313,8 @@ def check_remotes( paths, remotes, db, checks,
 				for k, ps in [('inconsistent', ps_err), ('consistent', ps_done), ('unavailable', ps_nx)]:
 					if path in ps: meta['remotes'][k] = list(set(meta['remotes'][k]).union([remote]))
 				db[path] = meta
+				skip_remotes[path].add(remote)
 			tails.extend(rpaths)
-			skip_remotes.add(remote)
 
 		# Recursive call to process the rest of the remotes
 		check_remotes( tails, remotes, db, checks,
