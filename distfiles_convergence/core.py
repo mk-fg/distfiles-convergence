@@ -45,14 +45,16 @@ class ManifestDBM(object):
 		raise NotImplementedError('Unknown value encoding version: {}'.format(ord(vv)))
 
 	def __getitem__(self, k): return self.decode(self.db[k])
+	def __delitem__(self, k): del self.db[k]
 	def __setitem__(self, k, meta): self.db[k] = '\1' + json.dumps(meta)
 	def __del__(self): self.db.close()
 
 	def iteritems(self): return ((k, self.decode(v)) for k,v in self.db.iteritems())
 
-	def undergoal_order(self, qmin, qmax, remotes, limit=None):
+	def undergoal_order(self, qmin, qmax, remotes, limit=None, ts_min=None):
 		queue = list()
 		for path, meta in self.iteritems():
+			if ts_min and meta['ts'] < ts_min: continue
 			meta_remotes = meta.get('remotes', dict())
 			prio = dict(
 				(mtype, len(set(
@@ -68,9 +70,8 @@ class ManifestDBM(object):
 
 
 def check_fs( path, db,
-		hashes=['md5', 'sha1', 'sha512'],
-		ignore_mtime=False, bs=2 * 2**20,
-		ts=None, local_changes_warn=True ):
+		hashes=['md5', 'sha1', 'sha512'], bs=2 * 2**20,
+		local_changes_warn=True, ts=None, ts_min=None ):
 	if not ts: ts = time()
 	if not isinstance(hashes, dict):
 		hashes = dict((alg, getattr( hashlib,
@@ -80,6 +81,7 @@ def check_fs( path, db,
 		for path in files:
 			path = realpath(join(root, path))
 			path_mtime = os.stat(path).st_mtime
+			if ts_min and path_mtime < ts_min: continue
 
 			try: meta = db[path]
 			except KeyError: meta = dict()
@@ -92,22 +94,23 @@ def check_fs( path, db,
 					for chunk in iter(ft.partial(src.read, bs), ''):
 						for chksum in src_hashes.viewvalues(): chksum.update(chunk)
 				meta_hashes = meta.get('hashes', dict())
+				meta_update = False
 				for alg,chksum in src_hashes.viewitems():
 					chksum = src_hashes[alg] = chksum.hexdigest()
 					if alg in meta_hashes:
-						if meta_hashes[alg] != chksum:
-							(log.warn if local_changes_warn else log.info)\
-								('Detected change in file contents: {}'.format(path))
-							meta_update = True
+						if meta_hashes[alg] != chksum: meta_update = True
 					else: meta_update = True
 				meta.update(dict(mtime=path_mtime, hashes=src_hashes))
+				if meta_update:
+					(log.warn if local_changes_warn else log.info)\
+						('Detected change in file contents: {}'.format(path))
+					meta.pop('remotes', None) # invalidated
 
 			meta['ts'] = ts
 			db[path] = meta
 
 
-def check_gc(db, timeout):
-	ts_min = time() - timeout
+def check_gc(db, ts_min):
 	for path in list( path for path, meta
 			in db.iteritems() if meta['ts'] < ts_min ):
 		log.debug('Dropping metadata for path: {}'.format(path))
@@ -327,6 +330,10 @@ def main():
 			' Can be specified more than once.'
 			' Values from the latter ones override values in the former.'
 			' Available CLI options override the values in any config.')
+	parser.add_argument('-m', '--mtime-after',
+		type=int, metavar='unix_time',
+		help='Only act on files with'
+			' mtime larger than the given value (unix timestamp).')
 	parser.add_argument('-n', '--skip-nx',
 		action='store_true', help='Do not retry known-404 mirrors.')
 	parser.add_argument('--debug',
@@ -360,9 +367,12 @@ def main():
 	log.debug('Updating manifest-db with hashes of local files')
 	for path in cfg.local:
 		check_fs( path, manifest_db, hashes=cfg.manifest.hashes,
-			ts=check_fs_ts, local_changes_warn=cfg.goal.warn.local_changes )
+			local_changes_warn=cfg.goal.warn.local_changes,
+			ts=check_fs_ts, ts_min=optz.mtime_after )
 	log.debug('Manifest-db cleanup')
-	check_gc(manifest_db, cfg.goal.gc_timeout * 24 * 3600)
+	ts_gc_min = check_fs_ts - cfg.goal.gc_timeout * 24 * 3600
+	if optz.mtime_after and optz.mtime_after < ts_gc_min:
+		check_gc(manifest_db, ts_min=ts_gc_min)
 
 	## List of remotes in order of preference
 	remotes = list()
@@ -382,7 +392,8 @@ def main():
 	qmin = min(len(remotes), cfg.goal.query.hard_min or qratio)
 	qmax = min(len(remotes), max(qmin, cfg.goal.query.hard_max or qratio))
 	undergoal = manifest_db.undergoal_order(
-		qmin, qmax, limit=cfg.goal.limit.files or None, remotes=remotes )
+		qmin, qmax, limit=cfg.goal.limit.files or None,
+		remotes=remotes, ts_min=optz.mtime_after )
 	# Check that each listed path actually exists now and isn't conf-excluded
 	drop = set()
 	for path in undergoal:
