@@ -55,7 +55,8 @@ class ManifestDBM(object):
 	def undergoal_order(self, qmin, qmax, remotes, limit=None, ts_min=None):
 		queue = list()
 		for path, meta in self.iteritems():
-			if ts_min and meta['ts'] < ts_min: continue
+			if ts_min and ( meta['ts'] < ts_min\
+				or meta.get('mtime', ts_min) < ts_min ): continue
 			meta_remotes = meta.get('remotes', dict())
 			prio = dict(
 				(mtype, len(set(
@@ -175,6 +176,19 @@ def check_portage(portage, path, hashes, conf,
 		if not match: raise NXError(name)
 		return True # at least one match found and no mismatches
 
+def rsync_filter(*patterns):
+	patterns = map(normpath, patterns)
+	includes, excludes = set(), [b'*']
+	for pat in patterns:
+		pat = pat.lstrip(os.sep)
+		slugs = pat.split(os.sep)
+		for slug in range(1, len(slugs)):
+			includes.add(os.path.join(os.sep, *slugs[:slug]) + os.sep)
+		includes.add(os.path.join(os.sep, *slugs))
+	includes = sorted(includes, key=len)
+	return b'\n'.join(it.chain(
+		it.imap(ft.partial(op.add, b'+ '), includes),
+		it.imap(ft.partial(op.add, b'- '), excludes) ))
 
 def check_rsync(url, path, hashes, conf):
 	from plumbum.cmd import rsync
@@ -200,17 +214,17 @@ def check_rsync_batched(url, paths, conf):
 	url = ''.join([url, '/' if not url.endswith('/') else '', '.'])
 	psg_err, psg_done, psg_nx = set(), set(), set()
 
-	if isinstance(paths, dict): paths = paths.viewitems()
 	paths = it.groupby(sorted(
-		(path.rsplit(os.sep, 1) + [path])
-		for path,hashes in paths ), key=op.itemgetter(0))
+		( (path.rsplit(os.sep, 1) + [path])
+			if path.startswith(os.sep) else ['', path, path] )
+		for path,hashes in paths.viewitems() ), key=op.itemgetter(0))
 	for dst, names in paths:
 		names = dict(it.imap(op.itemgetter(1, 2), names))
 		ps_err, ps_done, ps_nx = set(), set(), set()
 		log.debug('Querying rsync-remote for {} names'.format(len(names)))
-		rsync_filter = '\n'.join(map('+ /{}'.format, names) + ['- *', ''])
+		sync_filter = rsync_filter(*names.keys())
 		with TemporaryFile() as tmp:
-			tmp.write(rsync_filter)
+			tmp.write(sync_filter)
 			tmp.flush(), tmp.seek(0)
 			proc = (rsync[ '--dry-run', '-cr', '-vv',
 				'--filter=merge -', url, dst ] < tmp).popen(stdout=PIPE)
@@ -229,7 +243,8 @@ def check_rsync_batched(url, paths, conf):
 			log.debug( 'Rsync stats - inconsistent:'
 				' {}, consistent: {}, nx: {}'.format(*it.imap(len, [ps_err, ps_done, ps_nx])) )
 			psg_err.update(ps_err), psg_done.update(ps_done), psg_nx.update(ps_nx)
-	return psg_err, psg_done, psg_nx
+
+	return psg_err, psg_done, psg_nx # three sets of full paths
 
 
 def check_mirror(url, path, hashes, conf): pass
