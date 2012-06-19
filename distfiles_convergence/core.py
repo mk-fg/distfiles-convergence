@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 
 import itertools as it, operator as op, functools as ft
-from contextlib import closing
+from contextlib import contextmanager, closing
 from time import time
 from fnmatch import fnmatch
 from threading import Event
 from tempfile import TemporaryFile
 from collections import defaultdict
-from os.path import join, realpath, basename, dirname
-import os, sys, hashlib, re
+from os.path import join, realpath, basename, dirname, exists, normpath
+import os, sys, hashlib, re, shutil
 
 try: import simplejson as json
 except ImportError: import json
@@ -247,6 +247,85 @@ def check_rsync_batched(url, paths, conf):
 	return psg_err, psg_done, psg_nx # three sets of full paths
 
 
+def debianese_name( name,
+		_re_ver=re.compile( r'^(?P<name>.+)'
+			r'(?P<ver_sep>[\-_])(?P<ver>[\d.]+'
+				r'(?P<suff_ver>[-_.]?\w+\d*)?(?P<suff_deb>\.orig)?)'
+			r'(?P<ext>\.(zip|rar|(tar\.|t)(gz|bz|bz2|xz|lzma|Z|lzo)))$' ) ):
+	# I actually have no idea how debian-src names are built
+	# TODO: some research here would be nice
+	match = _re_ver.search(name)
+	if not match:
+		# log.debug('Failed to debianize name: {}'.format(name))
+		return
+	try:
+		if match.group('suff_ver') == '.orig'\
+				or match.group('suff_deb') == '.orig':
+			return name # looks like a debian-src name already
+	except IndexError: pass
+	name = 'pool/{0[0]}/{0}/{0}_{1}.orig{2}'.format(
+		match.group('name'), match.group('ver'), match.group('ext') )
+	return name
+
+@contextmanager
+def debianese_rsync_paths(paths, path_dst, links=False, cleanup=True):
+	# To be able to rsync vs these non-native names, rsync paths have
+	#  to be created, and tmp hardlinks seem to be the best way space/performance-wise,
+	#  but it needs too much permissions for distfiles-path
+	paths_tmp, paths_gc = dict(), list()
+	if not exists(path_dst): os.mkdir(path_dst)
+	try:
+		for path in paths:
+			path_dir, name = dirname(path), basename(path)
+			name_deb = debianese_name(name)
+			name_deb_base = name_deb and basename(name_deb)
+			path_tmp = name_deb_base and join(path_dst, name_deb_base)
+			if path_tmp is None\
+					or ( name_deb_base != name\
+						and exists(join(path_dir, name_deb_base)) ):
+				paths_tmp[path] = None
+				continue
+			if not (name_deb_base == name and exists(path_tmp)):
+				paths_gc.append(path_tmp)
+				try:
+					if not links: raise AssertionError('Skipped')
+					os.link(path, path_tmp)
+				except (OSError, IOError, AssertionError):
+					shutil.copy(path, path_tmp)
+			paths_tmp[path] = name_deb
+		yield paths_tmp
+	finally:
+		if not cleanup: paths_gc = list()
+		for path_tmp in paths_gc:
+			try: os.unlink(path_tmp)
+			except (OSError, IOError): pass
+
+def check_deb_rsync_batched(url, paths, conf):
+	with debianese_rsync_paths(
+			paths.keys(), conf.distfiles_tmp,
+			links=conf.use_hardlinks, cleanup=conf.cleanup ) as paths_deb:
+		ps_nx, ps_check = set(), dict()
+		for path, path_deb in paths_deb.viewitems():
+			if path_deb is None: ps_nx.add(path)
+			else: ps_check[path_deb] = path
+		log.debug(( 'Checking {} debianized'
+			' names (skipped: {})' ).format(len(ps_check), len(ps_nx)))
+		if ps_check:
+			ps_err, ps_done, ps_nx_chk = ( set(ps_check[p] for p in ps_set)
+				for ps_set in check_rsync_batched( url,
+					dict( (path_deb, paths[path])
+						for path_deb, path in ps_check.viewitems() ),
+					conf, to_flat_path=conf.distfiles_tmp ) )
+					# TODO: (BLOCKER) to_flat_path implementation
+					#  idea is to have switch so check_rsync will specify all the paths on command line
+					#  instead of passing them as an include-filter, so dst path can have flat hierarchy
+			ps_nx.update(ps_nx_chk)
+	return ps_err, ps_done, ps_nx
+
+def check_deb_rsync(url, path, hashes, conf):
+	return check_deb_rsync_batched(url, {path: hashes}, conf)
+
+
 def check_mirror(url, path, hashes, conf): pass
 
 
@@ -381,6 +460,8 @@ def main():
 		(k, ft.partial(v, conf=cfg.checks.get(k.split('__', 1)[0], dict())))
 		for k,v in dict( gentoo_portage=check_portage,
 			rsync=check_rsync, rsync__batched=check_rsync_batched,
+			rsync_debian=check_deb_rsync,
+			rsync_debian__batched=check_deb_rsync_batched,
 			mirrors=check_mirror ).viewitems() )
 
 	## Catch-up with local fs

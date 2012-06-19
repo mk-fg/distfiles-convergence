@@ -7,6 +7,10 @@ remote: # in order of preference
     # - /usr/portage
   rsync: # rsync mirrors are more efficient than just dumb download
     # - rsync://gentoo.gossamerhost.com/gentoo-distfiles/
+  rsync_debian:
+    # Names here will be mangled in debianese way,
+    #  like rsync-3.0.7.tar.gz -> /r/rsync/rsync_3.0.7.orig.tar.gz
+    # - rsync://rsync.mirrorservice.org/debian
 
   # Not implemented yet.
   # mirrors: # http(s) / ftp
@@ -59,6 +63,10 @@ checks:
     #  "{hash}" will be substituted with checksum of the path.
     # Can be static one-for-all-portage-paths-specified.
     meta_manifest: /tmp/portage_manifest.{hash}.db
-  mirrors:
-    request_interval: 10
-    full_fetch_interval: 120
+  rsync_debian:
+    distfiles_tmp: /tmp/deb_tmp # path to dump debian-named distfiles to
+    cleanup: true # unlink created files afterwards
+    # Try to hardlink files to distfiles_tmp path (which can be the same
+    #  as distfiles-path, naming conflicts are handled) instead of copying,
+    #  falling back to copy on failures
+    use_hardlinks: false
