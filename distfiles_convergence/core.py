@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from threading import Event
 from tempfile import TemporaryFile
 from collections import defaultdict
-from os.path import join, realpath, basename, dirname
+from os.path import join, realpath, basename, dirname, normpath
 import os, sys, hashlib, re
 
 try: import simplejson as json
