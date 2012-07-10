@@ -96,17 +96,19 @@ def check_fs( path, db,
 					for chunk in iter(ft.partial(src.read, bs), ''):
 						for chksum in src_hashes.viewvalues(): chksum.update(chunk)
 				meta_hashes = meta.get('hashes', dict())
-				meta_update = False
+				meta_update, meta_inconsistency = False, False
 				for alg,chksum in src_hashes.viewitems():
 					chksum = src_hashes[alg] = chksum.hexdigest()
 					if alg in meta_hashes:
-						if meta_hashes[alg] != chksum: meta_update = True
+						if meta_hashes[alg] != chksum:
+							meta_update = meta_inconsistency = True
 					else: meta_update = True
 				meta.update(dict(mtime=path_mtime, hashes=src_hashes))
 				if meta_update:
-					(log.warn if local_changes_warn else log.info)\
-						('Detected change in file contents: {}'.format(path))
 					meta.pop('remotes', None) # invalidated
+					if meta_inconsistency: # otherwise it's just a new file or hash
+						(log.warn if local_changes_warn else log.info)\
+							('Detected change in file contents: {}'.format(path))
 
 			meta['ts'] = ts
 			db[path] = meta
