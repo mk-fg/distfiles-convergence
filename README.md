@@ -81,17 +81,17 @@ installed from a checkout with something like that:
 
 	% python setup.py install
 
-Note that to install stuff in system-wide PATH and site-packages, elevated
-privileges are often required.
-Use
-[~/.pydistutils.cfg](http://docs.python.org/install/index.html#distutils-configuration-files)
-or [virtualenv](http://pypi.python.org/pypi/virtualenv) to do unprivileged
-installs into custom paths.
-
 Better way would be to use [pip](http://pip-installer.org/) to install all the
 necessary dependencies as well:
 
 	% pip install 'git://github.com/mk-fg/distfiles-convergence.git#egg=distfiles-convergence'
+
+Note that to install stuff in system-wide PATH and site-packages, elevated
+privileges are often required.
+Use "install --user",
+[~/.pydistutils.cfg](http://docs.python.org/install/index.html#distutils-configuration-files)
+or [virtualenv](http://pypi.python.org/pypi/virtualenv) to do unprivileged
+installs into custom paths.
 
 Alternatively, `./distfiles-convergence` can be run right from the checkout tree,
 without any installation.
