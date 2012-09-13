@@ -36,8 +36,8 @@ setup(
 		'Programming Language :: Python :: 2 :: Only',
 		'Topic :: Internet',
 		'Topic :: Security',
-		'Topic :: System :: Archiving'
-		'Topic :: System :: Archiving :: Packaging'
+		'Topic :: System :: Archiving',
+		'Topic :: System :: Archiving :: Packaging',
 		'Topic :: System :: Monitoring',
 		'Topic :: System :: Software Distribution' ],
 
