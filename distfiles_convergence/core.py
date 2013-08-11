@@ -143,7 +143,7 @@ def check_portage(portage, path, hashes, conf,
 			log.debug( 'Updating combined'
 				' portage manifest-db ({})'.format(meta_manifest) )
 			from plumbum.cmd import find, xargs
-			from plumbum.commands import PIPE
+			from subprocess import PIPE
 			proc = (
 					find[ portage, '-mindepth', '3', '-maxdepth', '3',
 						'-name', 'Manifest', '-newert', '@{}'.format(int(meta_manifest_ts)) ]\
@@ -212,7 +212,7 @@ def check_rsync(url, path, hashes, conf):
 
 def check_rsync_batched(url, paths, conf):
 	from plumbum.cmd import rsync
-	from plumbum.commands import PIPE
+	from subprocess import PIPE
 	url = ''.join([url, '/' if not url.endswith('/') else '', '.'])
 	psg_err, psg_done, psg_nx = set(), set(), set()
 
