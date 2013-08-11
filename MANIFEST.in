@@ -1,0 +1,2 @@
+include distfiles_convergence/core.yaml
+include COPYING README.md
