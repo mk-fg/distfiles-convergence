@@ -12,7 +12,7 @@ except IOError: readme = ''
 setup(
 
 	name = 'distfiles-convergence',
-	version = '12.05.1',
+	version = '14.05.0',
 	author = 'Mike Kazantsev',
 	author_email = 'mk.fraggod@gmail.com',
 	license = 'WTFPL',

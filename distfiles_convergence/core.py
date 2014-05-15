@@ -91,13 +91,13 @@ def check_fs( path, db,
 			if meta and path_mtime != meta.get('mtime'):
 				src_hashes = dict( (alg, func())
 					for alg,func in hashes.viewitems() )
-				log.debug('Generating checksums for file: {}'.format(path))
+				log.debug('Generating checksums for file: %r', path)
 				try:
 					with open(path, 'rb') as src:
 						for chunk in iter(ft.partial(src.read, bs), ''):
 							for chksum in src_hashes.viewvalues(): chksum.update(chunk)
 				except (OSError, IOError) as err:
-					log.warn('Failed to open mtime-changed file {!r}, skipping: {}'.format(path, err))
+					log.warn('Failed to open mtime-changed file %r, skipping: %s', path, err)
 					continue
 				meta_hashes = meta.get('hashes', dict())
 				meta_update, meta_inconsistency = False, False
@@ -112,7 +112,7 @@ def check_fs( path, db,
 					meta.pop('remotes', None) # invalidated
 					if meta_inconsistency: # otherwise it's just a new file or hash
 						(log.warn if local_changes_warn else log.info)\
-							('Detected change in file contents: {}'.format(path))
+							('Detected change in file contents: %r', path)
 
 			meta['ts'] = ts
 			db[path] = meta
@@ -121,7 +121,7 @@ def check_fs( path, db,
 def check_gc(db, ts_min):
 	for path in list( path for path, meta
 			in db.iteritems() if meta['ts'] < ts_min ):
-		log.debug('Dropping metadata for path: {}'.format(path))
+		log.debug('Dropping metadata for path: %r', path)
 		del db[path]
 
 
@@ -145,7 +145,7 @@ def check_portage(portage, path, hashes, conf,
 		except OSError: portage_ts = 0
 		if not portage_ts or portage_ts > meta_manifest_ts:
 			log.debug( 'Updating combined'
-				' portage manifest-db ({})'.format(meta_manifest) )
+				' portage manifest-db (%r)', meta_manifest )
 			from plumbum.cmd import find, xargs
 			from subprocess import PIPE
 			proc = (
@@ -177,7 +177,7 @@ def check_portage(portage, path, hashes, conf,
 					continue
 			except KeyError: continue
 			log.info( 'Inconsistency b/w checksums'
-				' (type: {}) - mdb: {}, local: {}'.format(alg, mdb_chksum, chksum) )
+				' (type: %s) - mdb: %s, local: %s', alg, mdb_chksum, chksum )
 			return False # checksum inconsistency
 		if not match: raise NXError(name)
 		return True # at least one match found and no mismatches
@@ -227,7 +227,7 @@ def check_rsync_batched(url, paths, conf):
 	for dst, names in paths:
 		names = dict(it.imap(op.itemgetter(1, 2), names))
 		ps_err, ps_done, ps_nx = set(), set(), set()
-		log.debug('Querying rsync-remote for {} names'.format(len(names)))
+		log.debug('Querying rsync-remote for %s names', len(names))
 		sync_filter = rsync_filter(*names.keys())
 		with TemporaryFile() as tmp:
 			tmp.write(sync_filter)
@@ -242,12 +242,12 @@ def check_rsync_batched(url, paths, conf):
 				if match:
 					name = match.group('name')
 					if name not in names:
-						log.warn('Detected "uptodate" response for unknown name: {}'.format(name))
+						log.warn('Detected "uptodate" response for unknown name: %r', name)
 					else: ps_done.add(names[name])
 					continue
 			ps_nx = set(names.viewvalues()).difference(ps_err, ps_done)
 			log.debug( 'Rsync stats - inconsistent:'
-				' {}, consistent: {}, nx: {}'.format(*it.imap(len, [ps_err, ps_done, ps_nx])) )
+				' %s, consistent: %s, nx: %s', *it.imap(len, [ps_err, ps_done, ps_nx]) )
 			psg_err.update(ps_err), psg_done.update(ps_done), psg_nx.update(ps_nx)
 
 	return psg_err, psg_done, psg_nx # three sets of full paths
@@ -286,13 +286,13 @@ def check_remotes( paths, remotes, db, checks,
 						(set(remotes).intersection(rs_nx) if not skip_nx else set()) ] ) ) )
 		if not rs_ordered: continue
 
-		log.debug('Querying remotes for path {}: {}'.format(path, rs_ordered))
+		log.debug('Querying remotes for path %r: %s', path, rs_ordered)
 		for remote in rs_ordered:
 			if remote in skip_remotes[path]: continue
 			rtype, url = remote
 
 			if '{}__batched'.format(rtype) in checks:
-				log.debug('Delaying query for path {!r} into batch: {}'.format(path, remote))
+				log.debug('Delaying query for path %r into batch: %s', path, remote)
 				if remote not in batched: batched[remote] = list()
 				batched[remote].append(((path, meta.get('hashes', dict())), rs_ordered))
 				break
@@ -300,10 +300,10 @@ def check_remotes( paths, remotes, db, checks,
 			try: match = checks[rtype](url, path, meta.get('hashes', dict()))
 			except NXError:
 				(log.warn if thresh_nx else log.info)\
-					('Path {!r} not found on remote {!r}'.format(path, remote))
+					('Path %r not found on remote %r', path, remote)
 				rs_nx.add(remote)
 			except Exception as err:
-				log.error('Failed to match remote {!r} and path {!r}: {}'.format(remote, path, err))
+				log.error('Failed to match remote %r and path %r: %s', remote, path, err)
 				thresh_bug -= 1
 				if thresh_bug < 0: raise
 			else:
@@ -311,11 +311,11 @@ def check_remotes( paths, remotes, db, checks,
 					rs_err.add(remote)
 					(log.warn if len(rs_err) >= thresh_err else log.info)\
 						( 'Detected inconsistency between'
-							' remote {!r} and path {!r}'.format(remote, path) )
+							' remote %r and path %r', remote, path )
 				elif match: rs_done.add(remote)
 				else:
 					(log.warn if warn_skip else log.info)\
-						('Skipped check Remote: {!r}, path: {!r}'.format(remote, path))
+						('Skipped check Remote: %r, path: %r', remote, path)
 
 				skip_remotes[path].add(remote)
 
@@ -435,7 +435,7 @@ def main():
 			if meta['ts'] != check_fs_ts and not os.path.exists(path):
 				raise KeyError(path)
 		except KeyError:
-			log.debug('Skipping check for unlisted/nx path: {}'.format(path))
+			log.debug('Skipping check for unlisted/nx path: %s', path)
 			drop.add(path)
 	undergoal = list(path for path in undergoal if path not in drop)
 
