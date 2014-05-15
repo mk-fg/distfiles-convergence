@@ -91,10 +91,14 @@ def check_fs( path, db,
 			if meta and path_mtime != meta.get('mtime'):
 				src_hashes = dict( (alg, func())
 					for alg,func in hashes.viewitems() )
-				log.debug('Generating checksums for path: {}'.format(path))
-				with open(path, 'rb') as src:
-					for chunk in iter(ft.partial(src.read, bs), ''):
-						for chksum in src_hashes.viewvalues(): chksum.update(chunk)
+				log.debug('Generating checksums for file: {}'.format(path))
+				try:
+					with open(path, 'rb') as src:
+						for chunk in iter(ft.partial(src.read, bs), ''):
+							for chksum in src_hashes.viewvalues(): chksum.update(chunk)
+				except (OSError, IOError) as err:
+					log.warn('Failed to open mtime-changed file {!r}, skipping: {}'.format(path, err))
+					continue
 				meta_hashes = meta.get('hashes', dict())
 				meta_update, meta_inconsistency = False, False
 				for alg,chksum in src_hashes.viewitems():
